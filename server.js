@@ -85,7 +85,6 @@ async function sendVerificationEmail(toEmail, code) {
   }
 }
 
-
 // ======================================================
 // 2. MIDDLEWARE DE AUTENTICACIÓN (para médicos / dashboard)
 // ======================================================
@@ -184,7 +183,6 @@ app.post("/api/auth/login", async (req, res) => {
 // 4. PACIENTES (para dashboard + IA backend)
 // ======================================================
 
-// Crear paciente manual (dashboard)
 app.post("/api/patients", authRequired, async (req, res) => {
   const { nombres, apellidos, dni, whatsapp, email } = req.body;
   const full_name = `${nombres} ${apellidos}`;
@@ -198,7 +196,6 @@ app.post("/api/patients", authRequired, async (req, res) => {
   res.json({ message: "Paciente creado correctamente", data: q.rows[0] });
 });
 
-// Buscar paciente por DNI (para IA backend)
 app.get("/api/patients/by-dni/:dni", async (req, res) => {
   const { dni } = req.params;
 
@@ -221,7 +218,6 @@ app.get("/api/patients/by-dni/:dni", async (req, res) => {
 // 5. VERIFICACIÓN DE PACIENTE (DNI + CÓDIGO POR EMAIL)
 // ======================================================
 
-// Enviar código de verificación al correo del paciente
 app.post("/api/patients/send-code", async (req, res) => {
   try {
     const { dni } = req.body;
@@ -241,10 +237,7 @@ app.post("/api/patients/send-code", async (req, res) => {
 
     const patient = p.rows[0];
 
-    // Generar código de 6 dígitos
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Expira en 1 minuto
     const expiresAt = new Date(Date.now() + 1 * 60 * 1000);
 
     await pool.query(
@@ -253,7 +246,6 @@ app.post("/api/patients/send-code", async (req, res) => {
       [patient.id, code, expiresAt]
     );
 
-    // Enviar correo
     await sendVerificationEmail(patient.email, code);
 
     res.json({
@@ -267,7 +259,6 @@ app.post("/api/patients/send-code", async (req, res) => {
   }
 });
 
-// Verificar código ingresado por el paciente
 app.post("/api/patients/verify-code", async (req, res) => {
   try {
     const { dni, code } = req.body;
@@ -287,7 +278,6 @@ app.post("/api/patients/verify-code", async (req, res) => {
 
     const patient = p.rows[0];
 
-    // Último código generado para el paciente
     const q = await pool.query(
       `SELECT * FROM patient_verification_codes
        WHERE patient_id=$1 AND is_used=false
@@ -311,7 +301,6 @@ app.post("/api/patients/verify-code", async (req, res) => {
       return res.status(400).json({ message: "El código ha expirado" });
     }
 
-    // Marcar como usado
     await pool.query(
       `UPDATE patient_verification_codes
        SET is_used=true
@@ -348,6 +337,8 @@ app.post("/api/cases/from-ia", async (req, res) => {
     appointment_time
   } = req.body;
 
+  console.log("🧪 PETICIÓN /cases/from-ia specialty:", specialty);
+
   if (!appointment_time) {
     return res.status(400).json({
       message: "El usuario debe elegir una fecha y hora para la cita."
@@ -374,14 +365,19 @@ app.post("/api/cases/from-ia", async (req, res) => {
     patientRecord = q1.rows[0];
   }
 
-  // 2. Buscar médico por especialidad
+  // 2. Buscar médico por especialidad (case-insensitive)
+  const normalizedSpecialty = (specialty || "Medicina General").trim();
+  console.log("🔍 Buscando médico para especialidad:", normalizedSpecialty);
+
   const doc = await pool.query(
-    "SELECT * FROM users WHERE specialty=$1 LIMIT 1",
-    [specialty]
+    "SELECT * FROM users WHERE LOWER(specialty) = LOWER($1) LIMIT 1",
+    [normalizedSpecialty]
   );
 
-  if (doc.rows.length === 0)
+  if (doc.rows.length === 0) {
+    console.warn("⚠️ No existe médico para esa especialidad:", normalizedSpecialty);
     return res.status(400).json({ message: "No existe médico para esa especialidad" });
+  }
 
   const doctor = doc.rows[0];
 
@@ -406,7 +402,7 @@ app.post("/api/cases/from-ia", async (req, res) => {
     [
       patientRecord.id,
       doctor.id,
-      specialty,
+      normalizedSpecialty,
       risk_level,
       conversation_summary,
       JSON.stringify(symptomsArray),
@@ -428,7 +424,7 @@ app.post("/api/cases/from-ia", async (req, res) => {
       newCase.rows[0].id,
       patientRecord.id,
       doctor.id,
-      specialty,
+      normalizedSpecialty,
       appointment_time
     ]
   );
@@ -566,7 +562,6 @@ app.post("/api/conversations/log", async (req, res) => {
   }
 });
 
-// (Opcional) Obtener historial por paciente/caso para el dashboard
 app.get("/api/conversations/by-patient/:dni", authRequired, async (req, res) => {
   const { dni } = req.params;
 
